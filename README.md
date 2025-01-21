@@ -52,6 +52,10 @@ reward = math.log(abs(paddle_pos - ball_position.y) / area_height + 0.000001)
  - `ball_position.y` is the ball center y position
  - `area_height` is the game area height
 
+## How to train the model
+
+Please refer to the training [`README.md`](./docs/README.md)for training details. [How to train](./docs/README.md)
+
 ## Screen Shots
 
 1. the training screen shot
