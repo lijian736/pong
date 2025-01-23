@@ -91,9 +91,7 @@ class GameWorld:
         returns: the game default state
         """
         # create the paddle with a circle shape
-        self.paddle = self.physical_world.CreateDynamicBody(
-            position=(self.paddle_x, self.area_height / 2)
-        )
+        self.paddle = self.physical_world.CreateDynamicBody(position=(self.paddle_x, self.area_height / 2))
         self.paddle.CreateFixture(
             shape=b2CircleShape(pos=(0, 0), radius=0.1),
             density=1,
@@ -103,12 +101,7 @@ class GameWorld:
         self.paddle.userData = {"name": "paddle", "collide": False}
 
         # create the ball
-        self.ball = self.physical_world.CreateDynamicBody(
-            position=(
-                10,
-                random.uniform(10, self.area_height - 10),
-            )
-        )
+        self.ball = self.physical_world.CreateDynamicBody(position=(10, random.uniform(10, self.area_height - 10)))
 
         self.ball.CreateFixture(
             shape=b2CircleShape(pos=(0, 0), radius=0.1),
@@ -165,9 +158,7 @@ class GameWorld:
 
         done = False
         for _ in range(step_num):
-            self.physical_world.Step(
-                time_step, velocity_iterations, position_iterations
-            )
+            self.physical_world.Step(time_step, velocity_iterations, position_iterations)
 
             done = self.check_over()
             if done:
@@ -182,9 +173,7 @@ class GameWorld:
         hit = False
 
         if done:
-            reward = -math.log(
-                abs(paddle_pos - ball_position.y) / self.area_height + 0.000001
-            )
+            reward = -math.log(abs(paddle_pos - ball_position.y) / self.area_height + 0.000001)
             hit = abs(paddle_pos - ball_position.y) < (paddle_height / 2)
 
         return (
