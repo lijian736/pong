@@ -86,7 +86,7 @@ class Agent:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="train the squash in REINFORCE algorithm")
+    parser = argparse.ArgumentParser(description="train the pong with REINFORCE algorithm")
     parser.add_argument("-e", "--episode", type=int, default=5000, help="the training episodes number")
     parser.add_argument("-l", "--lr", type=float, default=0.0001, help="the learning rate")
     
