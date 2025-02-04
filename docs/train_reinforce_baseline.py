@@ -37,7 +37,7 @@ class Policy(nn.Module):
 
 class Agent:
     """
-    the Proximal Policy Optimization(PPO) agent
+    the REINFORCE with baseline agent
 
     args:
         learning_rate: the learning rate
@@ -49,22 +49,15 @@ class Agent:
         self.lr = learning_rate if learning_rate is not None else 0.001
         self.action_size = 2
 
-        self.update_times = 6
-
         # the memory for 1 episode
         self.episode_memory = []
         # the memory for all necessary episodes
         self.memory = []
 
-        # the target policy
         self.pi = Policy(self.action_size)
-        # the sampling policy
-        self.pi_old = Policy(self.action_size)
 
         if policy_path is not None:
             self.pi.load_state_dict(torch.load(policy_path, map_location=torch.device("cpu"), weights_only=True))
-
-        self.pi_old.load_state_dict(self.pi.state_dict())
 
         self.optimizer = optim.Adam(self.pi.parameters(), lr=self.lr)
         self.device = None
@@ -72,19 +65,17 @@ class Agent:
     def set_device(self, device):
         self.device = device
         self.pi.to(self.device)
-        self.pi_old.to(self.device)
 
     def get_action(self, state):
-        with torch.no_grad():
-            state = torch.tensor([state], device=self.device, dtype=torch.float32)
-            probs = self.pi_old(state)
-            probs = probs[0]
-            dist = Categorical(probs)
-            action = dist.sample().item()
-            return action, probs[action]
+        state = torch.tensor([state], device=self.device, dtype=torch.float32)
+        probs = self.pi(state)
+        probs = probs[0]
+        dist = Categorical(probs)
+        action = dist.sample().item()
+        return action, probs[action]
 
-    def add(self, state, action, reward, prob):
-        data = (state, action, reward, prob)
+    def add(self, reward, prob):
+        data = (reward, prob)
         self.episode_memory.append(data)
 
     def sync_memory(self):
@@ -92,46 +83,33 @@ class Agent:
         self.episode_memory.clear()
 
     def update(self):
+        loss = 0
+
         # the reward mean value
-        g_mean = 0
+        G_mean = 0
         for index, episode_data in enumerate(self.memory):
-            _, _, reward, _ = episode_data[-1]
-            g_mean += (reward - g_mean) / (index + 1)
+            reward, _ = episode_data[-1]
+            G_mean += (reward - G_mean) / (index + 1)
 
-        # PPO
-        for _ in range(self.update_times):
-            loss = 0
-            for episode_data in self.memory:
-                G = 0
-                step_mean_reward = g_mean
-                for state, action, reward, prob_old in reversed(episode_data):
-                    G = reward + self.gamma * G
-                    rectified_g = G - step_mean_reward
+        # REINFORCE with baseline
+        for episode_data in self.memory:
+            step_mean_reward = G_mean
+            G = 0
+            for reward, prob in reversed(episode_data):
+                G = reward + self.gamma * G
+                loss += -torch.log(prob) * (G - step_mean_reward)
+                step_mean_reward *= self.gamma
 
-                    state = torch.tensor([state], device=self.device, dtype=torch.float32)
-                    prob_pi = self.pi(state)[0][action]
+        loss = loss / len(self.memory)
 
-                    ratio = prob_pi / prob_old
-                    val1 = ratio * rectified_g
-                    val2 = torch.clamp(ratio, 0.9, 1.1) * rectified_g
-                    min_val = torch.min(val1, val2)
-
-                    loss += -min_val
-                    step_mean_reward *= self.gamma
-
-            loss = loss / len(self.memory)
-
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
         self.memory.clear()
-        # syn the policy
-        self.pi_old.load_state_dict(self.pi.state_dict())
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="train the pong in PPO algorithm")
+    parser = argparse.ArgumentParser(description="train the pong in REINFORCE with baseline algorithm")
     parser.add_argument("-e", "--episode", type=int, default=5000, help="the training episodes number")
     parser.add_argument("-l", "--lr", type=float, default=0.0001, help="the learning rate")
 
@@ -151,9 +129,9 @@ if __name__ == "__main__":
     device = torch.device("cpu")
     print(f"the device: {device}")
 
-    if os.path.exists("./ppo_model_params.pth"):
+    if os.path.exists("./reinforce_baseline_model_params.pth"):
         # the PPO agent
-        agent = Agent(learning_rate, "./ppo_model_params.pth")
+        agent = Agent(learning_rate, "./reinforce_baseline_model_params.pth")
     else:
         agent = Agent(learning_rate)
 
@@ -175,7 +153,7 @@ if __name__ == "__main__":
         while not done:
             action, prob = agent.get_action(state)
             next_state, reward, done, hit = env.step(action=action, step_num=3, paddle_height=PADDLE_HEIGHT)
-            agent.add(state, action, reward, prob)
+            agent.add(reward, prob)
             state = next_state
 
         total_reward += reward
@@ -197,5 +175,5 @@ if __name__ == "__main__":
             # update the agent
             agent.update()
 
-    torch.save(agent.pi.state_dict(), "ppo_model_params.pth")
-    torch.save(agent.pi, "ppo_model.pth")
+    torch.save(agent.pi.state_dict(), "reinforce_baseline_model_params.pth")
+    torch.save(agent.pi, "reinforce_baseline_model.pth")

@@ -143,7 +143,7 @@ class PongScene extends Phaser.Scene {
      * Use it to load assets. This method is called by the Scene Manager, after init() and before create()
      */
     preload() {
-        ort.InferenceSession.create('resources/weight/reinforce_model.onnx').then(session => {
+        ort.InferenceSession.create('resources/weight/ppo_model.onnx').then(session => {
             this.ortSession = session
         })
     }
