@@ -2,14 +2,16 @@ from typing import List, Dict, Tuple
 from collections import deque
 import random
 import math
+import os
+import time
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
-from tqdm import tqdm
-from game_world import GameState, GameWorld
+from game_world import GameWorld
 
 
 class ReplayBuffer:
@@ -66,9 +68,7 @@ class ReplayBuffer:
         probs_total = probs.sum()
         probs = probs / probs_total
 
-        selected_index = np.random.choice(
-            len(self.buffer), size=self.batch_size, replace=False, p=probs
-        )
+        selected_index = np.random.choice(len(self.buffer), size=self.batch_size, replace=False, p=probs)
         data = [self.buffer[idx] for idx in selected_index]
 
         state = torch.tensor(np.stack([x[0] for x in data]).astype(np.float32))
@@ -90,14 +90,23 @@ class DQNet(nn.Module):
 
     def __init__(self, action_size):
         super().__init__()
-        self.layer1 = nn.Linear(4, 32)
-        self.layer2 = nn.Linear(32, 32)
-        self.layer3 = nn.Linear(32, action_size)
+        self.layer1 = nn.Linear(5, 64)
+        self.layer1.name = "layer1"
+
+        self.layer2 = nn.Linear(64, 32)
+        self.layer2.name = "layer2"
+
+        self.layer3 = nn.Linear(32, 32)
+        self.layer3.name = "layer3"
+
+        self.layer4 = nn.Linear(32, action_size)
+        self.layer4.name = "layer4"
 
     def forward(self, input: torch.tensor) -> torch.tensor:
         x = F.relu(self.layer1(input))
         x = F.relu(self.layer2(x))
-        x = self.layer3(x)
+        x = F.relu(self.layer3(x))
+        x = self.layer4(x)
         return x
 
 
@@ -106,20 +115,29 @@ class DQNAgent:
     the deep Q-network agent
     """
 
-    def __init__(self):
-        self.gamma = 0.98
-        self.lr = 0.001
+    def __init__(self, learning_rate=None, weights_path=None):
+        self.gamma = 0.99
+        self.lr = learning_rate if learning_rate is not None else 0.001
         self.epsilon = 0.1
         self.buffer_size = 4000
         self.batch_size = 128
-        self.action_size = 3  # {0：move up, 1:move down, 2:stay still}
+        self.action_size = 2
 
         self.episode_buffer = deque(maxlen=self.buffer_size)
         self.replay_buffer = ReplayBuffer(self.buffer_size, self.batch_size)
+
         self.qnet = DQNet(self.action_size)
+        if weights_path is not None:
+            self.qnet.load_state_dict(torch.load(weights_path, map_location=torch.device("cpu"), weights_only=True))
+
         self.qnet_target = DQNet(self.action_size)
         self.optimizer = optim.Adam(self.qnet.parameters(), lr=self.lr)
         self.device = None
+
+    def set_device(self, device) -> None:
+        self.device = device
+        self.qnet.to(self.device)
+        self.qnet_target.to(self.device)
 
     def get_action(self, state, epsilon: float = None) -> int:
         if epsilon is None:
@@ -132,21 +150,16 @@ class DQNAgent:
             qs = self.qnet(state)
             return qs.argmax().item()
 
-    def set_device(self, device) -> None:
-        self.device = device
-        self.qnet.to(self.device)
-        self.qnet_target.to(self.device)
-
     def add(self, state, action: int, reward: float, next_state, done: bool) -> None:
         data = (state, action, reward, next_state, done)
         self.episode_buffer.append(data)
 
-    def sync_buffer(self) -> None:
-        modified_reward = 0
+    def sync_buffer(self, scale: float = 0.9) -> None:
+        priority = 1.0
+
         for state, action, reward, next_state, done in reversed(self.episode_buffer):
-            priority = 1.0
-            modified_reward = reward + modified_reward * self.gamma
             self.replay_buffer.add(state, action, reward, next_state, done, priority)
+            priority *= scale
 
         self.episode_buffer.clear()
 
@@ -157,18 +170,12 @@ class DQNAgent:
         if len(self.replay_buffer) < self.batch_size:
             return
 
-        state, action, reward, next_state, done, priority = (
-            self.replay_buffer.get_batch()
-        )
+        state, action, reward, next_state, done, priority = self.replay_buffer.get_batch()
 
-        state = state.to(self.device)
         qs = self.qnet(state)
-        qs = qs.to(torch.device("cpu"))
         q = qs[range(len(action)), action]
 
-        next_state = next_state.to(self.device)
         next_qs = self.qnet_target(next_state)
-        next_qs = next_qs.to(torch.device("cpu"))
         next_q = next_qs.max(1)[0]
 
         next_q.detach()
@@ -186,66 +193,82 @@ class DQNAgent:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="train the pong with DQN algorithm")
+    parser.add_argument("-e", "--episode", type=int, default=5000, help="the training episodes number")
+    parser.add_argument("-l", "--lr", type=float, default=0.0005, help="the learning rate")
+    parser.add_argument("-s", "--priority_scale", type=float, default=0.7, help="the learning rate")
+
+    # parse the command args
+    args = parser.parse_args()
+
+    episodes = args.episode
+    learning_rate = args.lr
+    priority_scale = args.priority_scale
+
     AREA_WIDTH = 1200
     AREA_HEIGHT = 600
     PADDLE_HEIGHT = 50
+    SYNC_INTERVAL = 20
 
-    episodes = 3600
-    sync_interval = 20
+    print(
+        f"\nstart to train with episodes [{episodes}], learning rate [{learning_rate}] and priority scale [{priority_scale}]"
+    )
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     print(f"the device: {device}")
 
-    # the game world
-    env = GameWorld(AREA_WIDTH, AREA_HEIGHT, PADDLE_HEIGHT)
-    # the DQN agent
-    agent = DQNAgent()
+    if os.path.exists("./dqn_model_params.pth"):
+        # the DQN agent
+        agent = DQNAgent(learning_rate, "./dqn_model_params.pth")
+    else:
+        # the DQN agent
+        agent = DQNAgent(learning_rate)
 
     # set the agent device
     agent.set_device(device)
 
+    start_time = time.perf_counter()
+
+    total_reward = 0
+    total_hits = 0
+
     for episode in range(episodes):
+        # the game world
+        env = GameWorld(AREA_WIDTH, AREA_HEIGHT)
         state = env.reset()
         done = False
         total_reward = 0
-        counter = 0
 
-        state = state.to_normalization(
-            x_width=AREA_WIDTH,
-            y_height=AREA_HEIGHT,
-            angle_extent=180,
-            paddle_extent=AREA_HEIGHT,
-        )
         while not done:
-            epsilon = max(0, 0.1 - episode * 0.0001)
+            epsilon = max(0, 0.2 - episode * 0.00001)
             action = agent.get_action(state, epsilon)
 
-            next_state, reward, done = env.step(action=action, step_num=3)
-
-            reward = reward * 100 if reward > 0 else reward * 5
-            next_state = next_state.to_normalization(
-                x_width=AREA_WIDTH,
-                y_height=AREA_HEIGHT,
-                angle_extent=180,
-                paddle_extent=AREA_HEIGHT,
-            )
+            next_state, reward, done, hit = env.step(action=action, step_num=8, paddle_height=PADDLE_HEIGHT)
 
             agent.add(state, action, reward, next_state, done)
             state = next_state
-            total_reward += reward
-            counter += 1
+
+        total_reward += reward
+        total_hits += int(hit)
 
         env.destroy_bodies()
-        
-        agent.sync_buffer()
-        print(f"episode:{episode}, got {counter} points, total reward: {total_reward}")
+        del env
 
-        if episode % 4 == 0:
-            for _ in range(30):
+        agent.sync_buffer(priority_scale)
+
+        if (episode + 1) % SYNC_INTERVAL == 0:
+            print(
+                f"episode:{episode-SYNC_INTERVAL+1}-{episode}, rewards: {total_reward:.1f}, hits: {total_hits}, duration: {(time.perf_counter() - start_time):.1f} seconds"
+            )
+
+            for _ in range(40):
                 agent.update()
             agent.clear()
-
-        if episode % sync_interval == 0:
             agent.sync_qnet()
 
+            total_reward = 0
+            total_hits = 0
+            start_time = time.perf_counter()
+
     torch.save(agent.qnet.state_dict(), "dqn_model_params.pth")
+    torch.save(agent.qnet, "dqn_model.pth")
