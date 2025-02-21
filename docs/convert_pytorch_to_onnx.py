@@ -26,7 +26,7 @@ class Policy(nn.Module):
 
 if __name__ == "__main__":
     # Step 1. the pytorch model weight path
-    pytorch_model_weight_path = "./reinforce_model_params.pth"
+    pytorch_model_weight_path = "./actor_critic_policy_params.pth"
     # the action space number
     action_space_n = 2
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     torch.onnx.export(
         policy_model,
         dummy_input,
-        "./reinforce_model.onnx",
+        "./actor_critic_model.onnx",
         export_params=True,
         opset_version=11,
         do_constant_folding=True,
@@ -61,12 +61,12 @@ if __name__ == "__main__":
     print(f"The model has been exported to .ONNX file successfully.")
 
     # Step 4. verify the output .ONNX file
-    onnx_policy_model = onnx.load("./reinforce_model.onnx")
+    onnx_policy_model = onnx.load("./actor_critic_model.onnx")
     onnx.checker.check_model(onnx_policy_model)
     print(f"The saved .ONNX model has been checked")
 
     # create the onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./reinforce_model.onnx")
+    ort_session = onnxruntime.InferenceSession("./actor_critic_model.onnx")
 
     ort_input = ort_session.get_inputs()[0]
     ort_input_name = ort_input.name
